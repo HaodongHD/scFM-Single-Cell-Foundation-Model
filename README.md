@@ -1,4 +1,4 @@
-# scFM — Single-Cell Foundation Model
+## scFM — Single-Cell Foundation Model
 
 This repository implements scFM (single-cell Foundation Model) from scratch across four modules: input embeddings, masked attention transformer, fine-tuning objectives, and gene regulatory network (GRN) inference.
 The model is pretrained on a single-cell RNA sequencing dataset of mouse brain tissue generously provided by the Kuofen Lee lab (data not publicly available). The dataset spans six major brain cell types — neurons, astrocytes, microglia, oligodendrocyte precursor cells (OPCs), oligodendrocytes, and vascular cells — profiled separately by sex, yielding 12 cell-type/sex groups totalling 1.36 million cells across 24,604 genes.
