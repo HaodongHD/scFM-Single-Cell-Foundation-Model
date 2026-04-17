@@ -68,30 +68,6 @@ A print-quality PDF of this figure is available at [`training_results.pdf`](trai
 | 3 | `module3_finetuning.py` | GEPC, ECS, DAR/gradient reversal, cell-type classification |
 | 4 | `module4_training_grn.py` | Training loop, perturbation prediction, GRN inference |
 
-### Quick start
-
-```bash
-pip install torch scanpy anndata numpy scipy
-python module1_foundations.py   # data pipeline
-python module2_transformer.py   # model + pretraining
-python module3_finetuning.py    # fine-tuning objectives
-python module4_training_grn.py  # training loop + GRN
-```
-
----
-
-## Citation
-
-```bibtex
-@article{cui2024scgpt,
-  title   = {scGPT: toward building a foundation model for single-cell multi-omics using generative AI},
-  author  = {Cui, Haotian and Wang, Chloe and Maan, Hassaan and Pang, Kuan and Luo, Fengning and Duan, Nan and Wang, Bo},
-  journal = {Nature Methods},
-  year    = {2024},
-  doi     = {10.1038/s41592-024-02201-0}
-}
-```
-
 
 ---
 
