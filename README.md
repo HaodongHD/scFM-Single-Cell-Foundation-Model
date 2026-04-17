@@ -1,151 +1,96 @@
 # scFM — Single-Cell Foundation Model
 
-A from-scratch implementation of a **generative foundation model for single-cell RNA sequencing (scRNA-seq)**, built in PyTorch with step-by-step commentary explaining every architectural decision.
+This repository implements scFM (single-cell Foundation Model) from scratch across four modules: input embeddings, masked attention transformer, fine-tuning objectives, and gene regulatory network (GRN) inference.
+The model is pretrained on a single-cell RNA sequencing dataset of mouse brain tissue generously provided by the Kuofen Lee lab (data not publicly available). The dataset spans six major brain cell types — neurons, astrocytes, microglia, oligodendrocyte precursor cells (OPCs), oligodendrocytes, and vascular cells — profiled separately by sex, yielding 12 cell-type/sex groups totalling 1.36 million cells across 24,604 genes.
+---
+
+## Pretraining results
+
+The model was pretrained on **1.36 million mouse brain cells** spanning 12 cell-type/sex combinations across 24,604 genes. Training used the Gene Expression Prediction (GEP) objective with value-binned expression (51 bins), a variable masking ratio uniformly drawn from {0.25, 0.50, 0.75}, and a cosine warm-up learning rate schedule repeated over **15 data cycles** (~10 shards per cycle).
+
+### Dataset
+
+| Cell type | Male | Female | Total |
+|---|---:|---:|---:|
+| Neuron | 433,660 | 419,437 | 853,097 |
+| Oligodendrocyte | 105,230 | 101,781 | 207,011 |
+| Astrocyte | 93,335 | 87,877 | 181,212 |
+| Microglia | 30,623 | 32,056 | 62,679 |
+| OPC | 22,666 | 23,734 | 46,400 |
+| Vascular | 12,463 | 13,393 | 25,856 |
+| **Total** | **697,977** | **678,278** | **1,376,255** |
+
+### Training configuration
+
+| Hyperparameter | Value |
+|---|---|
+| Embedding dimension | 512 |
+| Transformer layers | 12 |
+| Attention heads | 8 |
+| FFN dimension | 512 |
+| Expression bins | 51 |
+| Max sequence length | 1,200 genes |
+| Mask ratios | {0.25, 0.50, 0.75} |
+| Batch size | 32 |
+| Peak learning rate | 1 × 10⁻⁴ |
+| LR schedule | Cosine warm-up per cycle |
+| Optimizer | AdamW (wd = 0.01) |
+| Gradient clip | 1.0 |
+| Training cycles | 15 |
+
+### Summary metrics
+
+| Metric | Value |
+|---|---|
+| Initial validation loss (cycle 1) | 244.64 |
+| Final validation loss (cycle 15) | 47.34 |
+| Total loss reduction | 80.7% |
+| Lowest cell-type loss | Neuron F — 26.95 |
+| Highest cell-type loss | Astrocyte M — 55.95 |
+
+### Training curves
+
+![scGPT training results](training_results.png)
+
+> **Figure.** **(A)** Validation loss by cell type across 15 training cycles. The overall mean (blue) and per-type traces show rapid convergence in the first two cycles, followed by steady improvement. Neurons (green) consistently achieve the lowest loss. **(B)** Training and validation loss track closely throughout, indicating no significant overfitting. **(C)** Final validation loss ranked by cell type. Neurons are the easiest to predict (sparse, distinctive profiles), while astrocytes and vascular cells are hardest. **(D)** Cell count vs. final validation loss on a log scale (Pearson r = −0.72). Cell types with more training examples — neurons (~850k), oligodendrocytes (~207k), astrocytes (~181k) — achieve lower loss, consistent with standard scaling behaviour. The dashed line shows the log-linear regression trend.
+
+A print-quality PDF of this figure is available at [`training_results.pdf`](training_results.pdf).
 
 ---
 
-## The implementation has 4 modules:
+## Modules
 
-| Module | Topic | Key Concepts |
-|--------|-------|--------------|
-| **Module 1** | Foundations & Input Embeddings | Gene vocabulary, value binning, three-part embedding |
-| **Module 2** | The Masked Attention Transformer | Generative attention mask, multi-head attention, GEP pretraining |
-| **Module 3** | Fine-Tuning Objectives | GEPC, ECS (elastic contrastive), gradient reversal (DAR), classification |
-| **Module 4** | Training, Perturbation & GRN | AdamW loop, Pearson_delta, attention-based GRN inference |
+| Module | File | Topics |
+|---|---|---|
+| 1 | `module1_foundations.py` | Gene vocabulary, value binning, three-part input embedding |
+| 2 | `module2_transformer.py` | Masked attention, transformer blocks, GEP pretraining loss |
+| 3 | `module3_finetuning.py` | GEPC, ECS, DAR/gradient reversal, cell-type classification |
+| 4 | `module4_training_grn.py` | Training loop, perturbation prediction, GRN inference |
+
+### Quick start
+
+```bash
+pip install torch scanpy anndata numpy scipy
+python module1_foundations.py   # data pipeline
+python module2_transformer.py   # model + pretraining
+python module3_finetuning.py    # fine-tuning objectives
+python module4_training_grn.py  # training loop + GRN
+```
 
 ---
 
-## Architecture Overview
+## Citation
 
-```
-scRNA-seq Cell  →  Tokenization  →  Three-Part Embedding  →  Transformer (12L × 8H)  →  Task Heads
-                                                                                          ├── GEP  (expression prediction)
-                                                                                          ├── GEPC (cell-level prediction)
-                                                                                          ├── ECS  (batch integration)
-                                                                                          ├── DAR  (domain adaptation)
-                                                                                          └── CLS  (cell type annotation)
-```
-
-**Key architectural choices implemented and explained:**
-- **No positional encoding** — genes are a *set*, not a sequence
-- **Value binning** — converts raw counts to relative expression ranks, removing batch effects at the input level
-- **Generative attention mask** — enables pretraining on non-sequential gene sets
-- **`<cls>` token** — aggregates all gene context into a single cell-level representation
-
-
----
-
-## Module Summaries
-
-### Module 1 — Foundations & Input Embeddings
-
-- `GeneVocab` — maps gene names to integer IDs, with special tokens (`<pad>`, `<cls>`, `<mask>`)
-- `value_binning` — converts absolute expression counts to **relative bin indices per cell**, the core trick for batch robustness:
-
-  ```python
-  # Same biology, two different sequencing depths:
-  cell_A = np.array([0, 5, 10, 50, 100])     # batch A
-  cell_B = np.array([0, 50, 100, 500, 1000])  # batch B (10x higher)
-
-  binned_A = value_binning(cell_A, n_bins=6)  # [0, 1, 2, 4, 5]
-  binned_B = value_binning(cell_B, n_bins=6)  # [0, 1, 2, 4, 5]  ← identical
-  ```
-
-- `scFMInputEmbedding` — combines three sources into a single vector per gene position:
-
-  ```
-  h_i = emb_g(gene_id)  +  emb_x(bin_value)  +  emb_c(condition_id)
-          ↑ categorical       ↑ ordinal (Linear)    ↑ categorical
-  ```
-
-- `scFMDataPreprocessor` — end-to-end pipeline from raw counts to model-ready tensors
-
----
-
-### Module 2 — The Masked Attention Transformer
-
-- **Why not causal masking?** — genes have no natural order; positional masking would introduce spurious dependencies
-- **Generative attention mask** — tokens are split into *known* (prompt) and *unknown* (target):
-
-  ```
-  Mask (K=known, U=unknown):
-              <cls>  G1(K)  G2(K)  G3(U)  G4(U)
-  G3(U)       attend attend attend attend  BLOCK
-  G4(U)       attend attend attend  BLOCK attend
-  ```
-
-- `scFMTransformerBlock` — Pre-LayerNorm for stability in 12-layer networks
-- `GeneExpressionPredictionHead` — MLP with **MSE loss** (not cross-entropy) to preserve the ordinal structure of expression bins
-- Complete training step with gradient clipping (`max_norm=1.0`)
-
----
-
-### Module 3 — Fine-Tuning Objectives
-
-Four composable objectives for different downstream tasks:
-
-| Loss | Type | Purpose |
-|------|------|---------|
-| GEP  | Self-supervised | Predict masked expression from gene-level context |
-| GEPC | Self-supervised | Predict expression from the **cell embedding** — forces rich cell representations |
-| ECS  | Contrastive | Pull biologically similar cells together above similarity threshold β |
-| DAR  | Adversarial | Remove batch effects via gradient reversal |
-
-**ECS — Elastic Cell Similarity:**
-```
-L_ECS = -mean( (cosine_sim(h_c_i, h_c_j) - β)² )
+```bibtex
+@article{cui2024scgpt,
+  title   = {scGPT: toward building a foundation model for single-cell multi-omics using generative AI},
+  author  = {Cui, Haotian and Wang, Chloe and Maan, Hassaan and Pang, Kuan and Luo, Fengning and Duan, Nan and Wang, Bo},
+  journal = {Nature Methods},
+  year    = {2024},
+  doi     = {10.1038/s41592-024-02201-0}
+}
 ```
 
-**DAR — gradient reversal for batch correction:**
-```python
-x_reversed = GradientReversalLayer()(cell_embedding)
-# Encoder learns to make batch prediction HARDER → embeddings become batch-invariant
-```
-
-**Task combinations:**
-- Cell type annotation: `GEP + GEPC + CLS`
-- Batch integration:    `GEP + GEPC + 10×ECS + DAR`
-
----
-
-### Module 4 — Training, Perturbation & GRN
-
-- `scFMTrainingConfig` — all hyperparameters with justifications
-- `scFMTrainer` — full loop: AdamW, step LR decay (×0.9/epoch), gradient clipping, checkpointing
-- **Variable mask ratios** — uniformly sampled from `{0.25, 0.50, 0.75}` per step
-- **Perturbation prediction** — control expression + knockout token → predicted post-perturbation profile; evaluated with `Pearson_delta`
-- **GRN inference** — rank-normalized attention maps identify transcription factor regulatory targets
-
----
-
-
-## Repository Structure
-
-```
-scfm/
-├── README.md
-├── requirements.txt
-├── setup.py
-├── LICENSE
-├── .gitignore
-└── scfm/
-    ├── __init__.py
-    ├── module1_foundations.py      # Vocabulary, binning, embeddings
-    ├── module2_transformer.py      # Masked attention, GEP loss
-    ├── module3_finetuning.py       # GEPC, ECS, DAR, classification
-    └── module4_training_grn.py     # Training loop, perturbation, GRN
-```
-
-
-
-## Requirements
-
-- Python ≥ 3.9
-- PyTorch ≥ 2.0
-- NumPy, SciPy, scikit-learn
-- Scanpy + AnnData
-
-See `requirements.txt` for full list.
 
 ---
 
