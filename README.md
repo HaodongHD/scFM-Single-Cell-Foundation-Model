@@ -51,7 +51,7 @@ The model was pretrained on **1.36 million mouse brain cells** spanning 12 cell-
 
 ### Training curves
 
-![scGPT training results](training_results.png)
+![scGPT training results](./training_results.png)
 
 > **Figure.** **(A)** Validation loss by cell type across 15 training cycles. The overall mean (blue) and per-type traces show rapid convergence in the first two cycles, followed by steady improvement. Neurons (green) consistently achieve the lowest loss. **(B)** Training and validation loss track closely throughout, indicating no significant overfitting. **(C)** Final validation loss ranked by cell type. Neurons are the easiest to predict (sparse, distinctive profiles), while astrocytes and vascular cells are hardest. **(D)** Cell count vs. final validation loss on a log scale (Pearson r = −0.72). Cell types with more training examples — neurons (~850k), oligodendrocytes (~207k), astrocytes (~181k) — achieve lower loss, consistent with standard scaling behaviour. The dashed line shows the log-linear regression trend.
 
